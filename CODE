@@ -1,0 +1,130 @@
+КОД СДЕЛАН В platformio 
+
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_SSD1306.h>
+#include <IRremoteESP8266.h>
+#include <IRrecv.h>
+#include <IRsend.h>
+#include <IRutils.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDR 0x3C
+#define IR_RECEIVER_PIN 4
+#define IR_TRANSMITTER_PIN 16
+#define BUTTON_PIN 5
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+IRrecv irrecv(IR_RECEIVER_PIN);
+IRsend irsend(IR_TRANSMITTER_PIN);
+decode_results last_received;
+
+void displayIRInfo(decode_results results);
+void sendLastIRSignal();
+
+bool buttonPressed = false;
+unsigned long lastPressTime = 0;
+const unsigned long debounceDelay = 50;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  
+  if(!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println(F("OLED not found!"));
+    while(1);
+  }
+  
+  irrecv.enableIRIn();
+  irsend.begin();
+  
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("IR Receiver Ready");
+  display.println("Waiting for signal...");
+  display.display();
+}
+
+void loop() {
+  if (irrecv.decode(&last_received)) {
+    displayIRInfo(last_received);
+    irrecv.resume();
+  }
+
+  if (digitalRead(BUTTON_PIN) == LOW && !buttonPressed && 
+      (millis() - lastPressTime) > debounceDelay) {
+    buttonPressed = true;
+    lastPressTime = millis();
+    
+    if (last_received.decode_type != UNKNOWN) {
+      sendLastIRSignal();
+    } else {
+      display.clearDisplay();
+      display.setCursor(40, 0);
+      display.println("No signal");
+      display.display();
+    }
+  }
+  
+  if (digitalRead(BUTTON_PIN) == HIGH && buttonPressed && 
+      (millis() - lastPressTime) > debounceDelay) {
+    buttonPressed = false;
+  }
+}
+
+void displayIRInfo(decode_results results) {
+  display.clearDisplay();
+  display.setCursor(25, 0);
+  display.setTextSize(1);
+  display.println("IR HACK Received:");
+  display.setCursor(0, 10);
+  display.print("Code: 0x");
+  display.println(results.value, HEX);
+  display.print("Protocol: ");
+  display.println(typeToString(results.decode_type));
+  display.print("Bits: ");
+  display.println(results.bits);
+  display.println("Press button to send");
+  display.display();
+}
+
+void sendLastIRSignal() {
+  display.clearDisplay();
+  display.setCursor(30, 0);
+  display.setTextSize(2);
+  display.println("IR HACK");
+  display.setCursor(50, 15);
+  display.setTextSize(1);
+  display.print("1.0v");
+  display.setCursor(70, 56);
+  display.print("by karton");
+  display.display();
+
+  uint16_t raw_data[last_received.rawlen];
+  for (uint16_t i = 0; i < last_received.rawlen; i++) {
+    raw_data[i] = last_received.rawbuf[i];
+  }
+
+  switch(last_received.decode_type) {
+    case NEC:
+      irsend.sendNEC(last_received.value, last_received.bits);
+      break;
+    case SONY:
+      irsend.sendSony(last_received.value, last_received.bits);
+      break;
+    case RC5:
+      irsend.sendRC5(last_received.value, last_received.bits);
+      break;
+    case RC6:
+      irsend.sendRC6(last_received.value, last_received.bits);
+      break;
+    default:
+      irsend.sendRaw(raw_data, last_received.rawlen, 38);
+  }
+  
+  delay(100);
+  irrecv.enableIRIn();
+}
